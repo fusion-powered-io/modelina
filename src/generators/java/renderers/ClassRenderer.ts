@@ -1,16 +1,15 @@
 import { JavaRenderer } from '../JavaRenderer';
 import {
   ConstrainedDictionaryModel,
+  ConstrainedMetaModel,
   ConstrainedObjectModel,
   ConstrainedObjectPropertyModel,
-  ConstrainedReferenceModel,
   ConstrainedUnionModel
 } from '../../../models';
 import { FormatHelpers } from '../../../helpers';
 import { JavaOptions } from '../JavaGenerator';
 import { ClassPresetType } from '../JavaPreset';
 import { unionIncludesBuiltInTypes } from '../JavaConstrainer';
-import { isEnum } from '../../csharp/Constants';
 
 /**
  * Renderer for Java's `class` type
@@ -33,31 +32,33 @@ export class ClassRenderer extends JavaRenderer<ConstrainedObjectModel> {
       this.dependencyManager.addDependency('import java.util.Map;');
     }
 
-    const abstractType = this.model.options.isExtended ? 'interface' : 'class';
+    const parentClass = getParentClass(this.model);
+    const parentInterfaces = getParentInterfaces(this.model);
 
-    const parentUnions = this.getParentUnions();
-    const extend = this.model.options.extend?.filter(
-      (extend) => extend.options.isExtended
-    );
-    const parents = [...(parentUnions ?? []), ...(extend ?? [])];
-
-    if (parents.length) {
-      for (const i of parents) {
-        this.dependencyManager.addModelDependency(i);
-      }
-
-      const inheritanceKeyworkd = this.model.options.isExtended
-        ? 'extends'
-        : 'implements';
-
-      return `public ${abstractType} ${
-        this.model.name
-      } ${inheritanceKeyworkd} ${parents.map((i) => i.name).join(', ')} {
+    if (!parentClass && parentInterfaces.length === 0) {
+      return `public class ${this.model.name} {
 ${this.indent(this.renderBlock(content, 2))}
 }`;
     }
 
-    return `public ${abstractType} ${this.model.name} {
+    let extension = '';
+    if (parentClass) {
+      this.dependencyManager.addModelDependency(parentClass);
+      extension = ` extends ${parentClass.name}`;
+    }
+
+    let implementations = '';
+    if (parentInterfaces.length > 0) {
+      const interfaces = parentInterfaces
+        .map(parentInterface => {
+          this.dependencyManager.addModelDependency(parentInterface);
+          return parentInterface.name;
+        })
+        .join(', ');
+      implementations = ` implements ${interfaces}`;
+    }
+
+    return `public class ${this.model.name}${extension}${implementations} {
 ${this.indent(this.renderBlock(content, 2))}
 }`;
   }
@@ -109,170 +110,85 @@ ${this.indent(this.renderBlock(content, 2))}
     return this.runPreset('setter', { property });
   }
 
-  private getParentUnions(): ConstrainedUnionModel[] | undefined {
-    const parentUnions: ConstrainedUnionModel[] = [];
-
-    if (!this.model.options.parents) {
-      return undefined;
-    }
-
-    for (const model of this.model.options.parents) {
-      if (
-        model instanceof ConstrainedUnionModel &&
-        !unionIncludesBuiltInTypes(model)
-      ) {
-        parentUnions.push(model);
-      }
-    }
-
-    if (!parentUnions.length) {
-      return undefined;
-    }
-
-    return parentUnions;
-  }
 }
-
-const getOverride = (
-  model: ConstrainedObjectModel,
-  property: ConstrainedObjectPropertyModel
-) => {
-  const isOverride = model.options.extend?.find((extend) => {
-    if (
-      !extend.options.isExtended ||
-      isDiscriminatorOrDictionary(model, property)
-    ) {
-      return false;
-    }
-
-    if (
-      extend instanceof ConstrainedObjectModel &&
-      extend.properties[property.propertyName]
-    ) {
-      return true;
-    }
-
-    if (
-      extend instanceof ConstrainedReferenceModel &&
-      extend.ref instanceof ConstrainedObjectModel &&
-      extend.ref.properties[property.propertyName]
-    ) {
-      return true;
-    }
-  });
-
-  return isOverride ? '@Override\n' : '';
-};
-
-export const isDiscriminatorOrDictionary = (
-  model: ConstrainedObjectModel,
-  property: ConstrainedObjectPropertyModel
-): boolean =>
-  model.options.discriminator?.discriminator ===
-    property.unconstrainedPropertyName ||
-  property.property instanceof ConstrainedDictionaryModel;
-
-const isEnumImplementedByConstValue = (
-  model: ConstrainedObjectModel,
-  property: ConstrainedObjectPropertyModel
-): boolean => {
-  if (!isEnum(property)) {
-    return false;
-  }
-
-  if (!model.options.implementedBy) {
-    return false;
-  }
-
-  // if the implementedBy property exist in the model options, check if the property exists in the implementedBy model and check if the property is set with a const value
-  return model.options.implementedBy.some((implementedBy) => {
-    return (
-      implementedBy instanceof ConstrainedObjectModel &&
-      implementedBy.properties[property.propertyName] &&
-      implementedBy.properties[property.propertyName].property.options.const
-        ?.value
-    );
-  });
-};
-
-const isEnumOrEnumInExtended = (
-  model: ConstrainedObjectModel,
-  property: ConstrainedObjectPropertyModel
-): boolean => {
-  if (!isEnum(property)) {
-    return false;
-  }
-
-  if (!model.options.extend) {
-    return false;
-  }
-
-  return model.options.extend.some((extend) => {
-    return (
-      extend instanceof ConstrainedReferenceModel &&
-      extend.ref instanceof ConstrainedObjectModel &&
-      extend.ref.properties[property.propertyName] &&
-      isEnum(extend.ref.properties[property.propertyName])
-    );
-  });
-};
 
 export const JAVA_DEFAULT_CLASS_PRESET: ClassPresetType<JavaOptions> = {
   self({ renderer }) {
     return renderer.defaultSelf();
   },
-  property({ property, model }) {
-    if (model.options.isExtended) {
-      return '';
-    }
-
+  property({ property }) {
     if (property.property.options.const?.value) {
       return `private final ${property.property.type} ${property.propertyName} = ${property.property.options.const.value};`;
     }
 
-    return `private ${property.property.type} ${property.propertyName};`;
-  },
-  getter({ property, model }) {
-    const getterName = `get${FormatHelpers.toPascalCase(
-      property.propertyName
-    )}`;
-
-    if (model.options.isExtended) {
-      if (isDiscriminatorOrDictionary(model, property)) {
-        return '';
-      }
-
-      return `public ${property.property.type} ${getterName}();`;
+    if(property.required && property.property.originalInput.type === 'array') {
+      return `private ${property.property.type} ${property.propertyName} = List.of();`
     }
 
-    return `${getOverride(model, property)}public ${
-      property.property.type
-    } ${getterName}() { return this.${property.propertyName}; }`;
+    if(property.property.originalInput.default) {
+      if(property.property.originalInput.enum) {
+        return `private ${property.property.type} ${property.propertyName} = ${property.property.type}.${property.property.originalInput.default};`;
+      }
+
+      return `private ${property.property.type} ${property.propertyName} = ${property.property.originalInput.default};`;
+    }
+
+    return `private ${property.property.type} ${property.propertyName};`;
+  },
+  getter({ property }) {
+    const getterName = `get${FormatHelpers.toPascalCase(property.propertyName)}`;
+
+    return `public ${property.property.type} ${getterName}() { return this.${property.propertyName}; }`;
   },
   setter({ property, model }) {
     if (property.property.options.const?.value) {
       return '';
     }
 
-    const setterName = FormatHelpers.toPascalCase(property.propertyName);
+    const setterMethods: string[] = [];
 
-    if (model.options.isExtended) {
-      // don't render setters for discriminator, dictionary properties, or enums that are set with a const value
-      if (
-        isDiscriminatorOrDictionary(model, property) ||
-        isEnumImplementedByConstValue(model, property)
-      ) {
-        return '';
-      }
+    const pascalCaseName = FormatHelpers.toPascalCase(property.propertyName);
+    setterMethods.push(`public void set${pascalCaseName}(${property.property.type} ${property.propertyName}) { this.${property.propertyName} = ${property.propertyName}; }`);
+    setterMethods.push(`public ${model.name} ${property.propertyName}(${property.property.type} ${property.propertyName}) { this.${property.propertyName} = ${property.propertyName}; return this; }`);
 
-      return `public void set${setterName}(${property.property.type} ${property.propertyName});`;
+    if(property.property.originalInput.type === 'array') {
+      const listType = property.property.type;
+      const itemType = listType.substring(listType.indexOf("<") + 1, listType.lastIndexOf(">"))
+      const itemName = `${property.propertyName}Item`;
+      setterMethods.push(`public ${model.name} add${pascalCaseName}Item(${itemType} ${itemName}) {
+if (this.${property.propertyName} == null) {
+  this.${property.propertyName} = List.of();
+}
+
+this.${property.propertyName}.add(${itemName});
+return this;
+}`);
     }
 
-    // don't render override for enums that are set with a const value
-    const override = !isEnumOrEnumInExtended(model, property)
-      ? getOverride(model, property)
-      : '';
-
-    return `${override}public void set${setterName}(${property.property.type} ${property.propertyName}) { this.${property.propertyName} = ${property.propertyName}; }`;
+    return setterMethods.join('\n');
   }
 };
+
+function getParentInterfaces(model: ConstrainedMetaModel): ConstrainedUnionModel[] {
+  if (!model.options.parents) {
+    return [];
+  }
+
+  return model.options.parents
+    .filter(parent => parent instanceof ConstrainedUnionModel && !unionIncludesBuiltInTypes(parent))
+    .map(model => model as ConstrainedUnionModel);
+}
+
+function getParentClass(model: ConstrainedMetaModel): ConstrainedObjectModel | undefined {
+  const parent = model.options.extend
+    ?.find(parent => parent.options.isExtended);
+  return parent ? parent as ConstrainedObjectModel : undefined;
+}
+
+export const isDiscriminatorOrDictionary = (
+  model: ConstrainedObjectModel,
+  property: ConstrainedObjectPropertyModel
+): boolean =>
+  model.options.discriminator?.discriminator ===
+  property.unconstrainedPropertyName ||
+  property.property instanceof ConstrainedDictionaryModel;

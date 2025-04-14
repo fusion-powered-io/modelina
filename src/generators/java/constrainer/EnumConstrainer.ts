@@ -38,7 +38,7 @@ export const DefaultEnumKeyConstraints: ModelEnumKeyConstraints = {
   NO_NUMBER_START_CHAR,
   NO_DUPLICATE_KEYS: NO_DUPLICATE_ENUM_KEYS,
   NO_EMPTY_VALUE,
-  NAMING_FORMATTER: FormatHelpers.toConstantCase,
+  NAMING_FORMATTER: FormatHelpers.upper,
   NO_RESERVED_KEYWORDS: (value: string) => {
     return NO_RESERVED_KEYWORDS(value, isReservedJavaKeyword);
   }

@@ -58,6 +58,7 @@ export const JAVA_DEFAULT_ENUM_PRESET: EnumPresetType<JavaOptions> = {
   },
   item({ item, model }) {
     //Cast the enum type just to be sure, as some cases can be `int` type with floating value.
+
     return `${item.key}((${model.type})${item.value})`;
   },
   ctor({ model }) {

@@ -813,13 +813,13 @@ export class CommonModel {
       alreadyIteratedModels,
       options
     );
-    CommonModel.mergeProperties(
+    /*CommonModel.mergeProperties(
       mergeTo,
       mergeFrom,
       originalInput,
       alreadyIteratedModels,
       options
-    );
+    );*/
     CommonModel.mergeItems(
       mergeTo,
       mergeFrom,
@@ -841,6 +841,9 @@ export class CommonModel {
       ];
     }
 
+    if(mergeFrom.discriminator) {
+      mergeTo.discriminator = mergeFrom.discriminator
+    }
     mergeTo.format = mergeTo.format || mergeFrom.format;
 
     if (

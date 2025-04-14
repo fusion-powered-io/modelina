@@ -51,20 +51,12 @@ export default function interpretAllOf(
     }
 
     if (interpreterOptions.allowInheritance === true) {
-      const allOfModelWithoutCache = interpreter.interpret(allOfSchema, {
-        ...interpreterOptions,
-        disableCache: true
-      });
-
-      if (allOfModelWithoutCache && isModelObject(allOfModelWithoutCache)) {
-        Logger.info(
-          `Processing allOf, inheritance is enabled, ${model.$id} inherits from ${allOfModelWithoutCache.$id}`,
-          model,
-          allOfModel
-        );
-
-        model.addExtendedModel(allOfModelWithoutCache);
-      }
+      Logger.info(
+        `Processing allOf, inheritance is enabled, ${model.$id} inherits from ${allOfModel.$id}`,
+        model,
+        allOfModel
+      );
+      model.addExtendedModel(allOfModel);
     }
 
     Logger.info(

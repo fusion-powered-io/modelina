@@ -1,5 +1,7 @@
 import {
   ConstrainedDictionaryModel,
+  ConstrainedMetaModel,
+  ConstrainedMetaModelOptionsDiscriminator,
   ConstrainedObjectModel,
   ConstrainedReferenceModel
 } from '../../../models';
@@ -15,22 +17,66 @@ const JACKSON_ANNOTATION_DEPENDENCY =
  */
 export const JAVA_JACKSON_PRESET: JavaPreset = {
   class: {
-    self({ renderer, content }) {
+    self({ renderer, content, model }) {
       renderer.dependencyManager.addDependency(JACKSON_ANNOTATION_DEPENDENCY);
-      return content;
+      const blocks: string[] = [];
+
+      if (model.properties) {
+        const propertyNames = Object.values(model.properties)
+          .map(property => `  "${property.propertyName}"`)
+          .join(',\n');
+        blocks.push(
+          renderer.renderAnnotation('JsonPropertyOrder', `{\n${propertyNames}\n}`)
+        );
+      }
+      const discriminator = findDiscriminator(model);
+
+      if (discriminator) {
+        blocks.push(
+          renderer.renderAnnotation('JsonIgnoreProperties', {
+            value: `"${discriminator.discriminator}"`,
+            allowSetters: 'true'
+          })
+        );
+        blocks.push(
+          renderer.renderAnnotation('JsonTypeInfo', {
+            use: 'JsonTypeInfo.Id.NAME',
+            include: 'JsonTypeInfo.As.PROPERTY',
+            property: `"${discriminator.discriminator}"`,
+            visible: 'true'
+          })
+        );
+      }
+
+      const types = (model.options.implementedBy ?? [])
+        ?.flatMap(implementation => getAllImplementations(implementation))
+        .map((implementation) => {
+          return `  @JsonSubTypes.Type(value = ${implementation.name}.class, name = "${implementation.name}")`;
+        })
+        .join(',\n');
+
+      if (types && types.length > 0) {
+        if(discriminator === undefined) {
+          blocks.push(
+            renderer.renderAnnotation('JsonTypeInfo', {
+              use: 'JsonTypeInfo.Id.DEDUCTION'
+            })
+          );
+        }
+        blocks.push(
+          renderer.renderAnnotation('JsonSubTypes', `{\n${types}\n}`)
+        );
+      }
+
+      return renderer.renderBlock([...blocks, content]);
     },
     property({ renderer, property, content, model }) {
-      if (model.options.isExtended) {
-        return '';
-      }
 
       //Properties that are dictionaries with unwrapped options, cannot get the annotation because it cannot be accurately unwrapped by the jackson library.
       const isDictionary =
         property.property instanceof ConstrainedDictionaryModel;
       const hasUnwrappedOptions =
-        isDictionary &&
-        (property.property as ConstrainedDictionaryModel).serializationType ===
-          'unwrap';
+        isDictionary && (property.property as ConstrainedDictionaryModel).serializationType === 'unwrap';
 
       const blocks: string[] = [];
 
@@ -57,30 +103,25 @@ export const JAVA_JACKSON_PRESET: JavaPreset = {
         )
       );
 
-      if (!property.required) {
-        blocks.push(
-          renderer.renderAnnotation(
-            'JsonInclude',
-            'JsonInclude.Include.NON_NULL'
-          )
-        );
-      }
+      blocks.push(
+        renderer.renderAnnotation(
+          'JsonInclude',
+          property.required && property.propertyName !== findDiscriminator(model)?.discriminator ? 'JsonInclude.Include.NON_NULL' : 'JsonInclude.Include.USE_DEFAULTS'
+        )
+      );
 
       blocks.push(content);
 
       return renderer.renderBlock(blocks);
     },
-    getter({ renderer, property, content, model }) {
-      if (model.options.isExtended) {
-        return content;
-      }
+    getter({ renderer, property, content }) {
       //Properties that are dictionaries with unwrapped options, cannot get the annotation because it cannot be accurately unwrapped by the jackson library.
       const isDictionary =
         property.property instanceof ConstrainedDictionaryModel;
       const hasUnwrappedOptions =
         isDictionary &&
         (property.property as ConstrainedDictionaryModel).serializationType ===
-          'unwrap';
+        'unwrap';
       const blocks: string[] = [];
       if (hasUnwrappedOptions) {
         blocks.push(renderer.renderAnnotation('JsonAnyGetter'));
@@ -169,3 +210,20 @@ ${content}`;
     }
   }
 };
+
+function getAllImplementations(model: ConstrainedMetaModel): ConstrainedMetaModel[] {
+  if (model.options.implementedBy && model.options.implementedBy.length > 0) {
+    return [model, ...model.options.implementedBy.flatMap(implementation => getAllImplementations(implementation))];
+  } else {
+    return [model];
+  }
+}
+
+function findDiscriminator(model: ConstrainedMetaModel): ConstrainedMetaModelOptionsDiscriminator | undefined {
+  if (model.options.discriminator) {
+    return model.options.discriminator;
+  } else if (model.options.extend) {
+    const parent = model.options.extend?.find(parent => parent.options.isExtended);
+    return parent ? findDiscriminator(parent) : undefined;
+  }
+}

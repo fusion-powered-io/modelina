@@ -1,7 +1,7 @@
 import {
   ConstrainedArrayModel,
   ConstrainedFloatModel,
-  ConstrainedIntegerModel,
+  ConstrainedIntegerModel, ConstrainedMetaModel, ConstrainedMetaModelOptionsDiscriminator,
   ConstrainedObjectModel,
   ConstrainedReferenceModel,
   ConstrainedStringModel
@@ -25,17 +25,11 @@ export const JAVA_CONSTRAINTS_PRESET: JavaPreset<JavaConstraintsPresetOptions> =
         renderer.dependencyManager.addDependency(
           `import ${importFrom}.validation.constraints.*;`
         );
-        renderer.dependencyManager.addDependency(
-          `import ${importFrom}.validation.Valid;`
-        );
+        renderer.dependencyManager.addDependency(`import ${importFrom}.validation.Valid;`);
         return content;
       },
       // eslint-disable-next-line sonarjs/cognitive-complexity
       property({ renderer, property, content, model }) {
-        if (model.options.isExtended) {
-          return '';
-        }
-
         const annotations: string[] = [];
 
         // needs cascade validation
@@ -47,7 +41,8 @@ export const JAVA_CONSTRAINTS_PRESET: JavaPreset<JavaConstraintsPresetOptions> =
           annotations.push(renderer.renderAnnotation('Valid'));
         }
 
-        if (property.required) {
+        const discriminator = findDiscriminator(model);
+        if (property.required && property.propertyName !== discriminator?.discriminator) {
           annotations.push(renderer.renderAnnotation('NotNull'));
         }
         const originalInput = property.property.originalInput;
@@ -119,3 +114,12 @@ export const JAVA_CONSTRAINTS_PRESET: JavaPreset<JavaConstraintsPresetOptions> =
       }
     }
   };
+
+function findDiscriminator(model: ConstrainedMetaModel): ConstrainedMetaModelOptionsDiscriminator | undefined {
+  if (model.options.discriminator) {
+    return model.options.discriminator;
+  } else if (model.options.extend) {
+    const parent = model.options.extend?.find(parent => parent.options.isExtended);
+    return parent ? findDiscriminator(parent) : undefined;
+  }
+}

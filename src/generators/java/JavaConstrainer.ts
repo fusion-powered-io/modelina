@@ -170,6 +170,8 @@ export const JavaDefaultTypeMapping: JavaTypeMapping = {
   },
   String({ constrainedModel }): string {
     switch (constrainedModel.options.format) {
+      case 'uuid':
+        return 'java.util.UUID'
       case 'date':
         return 'java.time.LocalDate';
       case 'time':
