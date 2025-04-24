@@ -54,11 +54,6 @@ interface ReplaceSpecialCharactersOptions {
 }
 
 export class FormatHelpers {
-
-  static upper(value: string): string {
-    return value.toUpperCase();
-  }
-
   /**
    * Upper first char in given string value.
    * @param {string} value to change

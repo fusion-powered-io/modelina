@@ -4,12 +4,14 @@ import {
   ConstrainedMetaModel,
   ConstrainedObjectModel,
   ConstrainedObjectPropertyModel,
+  ConstrainedReferenceModel,
   ConstrainedUnionModel
 } from '../../../models';
 import { FormatHelpers } from '../../../helpers';
 import { JavaOptions } from '../JavaGenerator';
 import { ClassPresetType } from '../JavaPreset';
-import { unionIncludesBuiltInTypes } from '../JavaConstrainer';
+import { JavaDefaultTypeMapping, unionIncludesBuiltInTypes } from '../JavaConstrainer';
+import { getTypeFromMapping } from '../../../helpers/TypeHelpers';
 
 /**
  * Renderer for Java's `class` type
@@ -93,10 +95,30 @@ ${this.indent(this.renderBlock(content, 2))}
     const properties = this.model.properties || {};
     const content: string[] = [];
 
+
     for (const property of Object.values(properties)) {
       const getter = await this.runGetterPreset(property);
       const setter = await this.runSetterPreset(property);
       content.push(this.renderBlock([getter, setter]));
+    }
+
+    const parentModel = getParentClass(this.model);
+    if (parentModel) {
+      const allParents = getAllParents(parentModel);
+      const parentProperties = allParents.flatMap(parent => Object.values(parent.properties || {}));
+      for (const property of parentProperties) {
+        const pascalCaseName = FormatHelpers.toPascalCase(property.propertyName);
+        // Get the type from the type mapping
+        const propertyType = getTypeFromMapping(JavaDefaultTypeMapping, {
+          constrainedModel: property.property,
+          options: this.options,
+          partOfProperty: property,
+          dependencyManager: this.dependencyManager
+        });
+
+        const parentFluentSetter = `public ${this.model.name} ${property.propertyName}(${propertyType} ${property.propertyName}) { this.set${pascalCaseName}(${property.propertyName}); return this; }`;
+        content.push(parentFluentSetter);
+      }
     }
 
     return this.renderBlock(content, 2);
@@ -121,12 +143,12 @@ export const JAVA_DEFAULT_CLASS_PRESET: ClassPresetType<JavaOptions> = {
       return `private final ${property.property.type} ${property.propertyName} = ${property.property.options.const.value};`;
     }
 
-    if(property.required && property.property.originalInput.type === 'array') {
-      return `private ${property.property.type} ${property.propertyName} = List.of();`
+    if (property.required && property.property.originalInput.type === 'array') {
+      return `private ${property.property.type} ${property.propertyName} = List.of();`;
     }
 
-    if(property.property.originalInput.default) {
-      if(property.property.originalInput.enum) {
+    if (property.property.originalInput.default) {
+      if (property.property.originalInput.enum) {
         return `private ${property.property.type} ${property.propertyName} = ${property.property.type}.${property.property.originalInput.default};`;
       }
 
@@ -151,9 +173,9 @@ export const JAVA_DEFAULT_CLASS_PRESET: ClassPresetType<JavaOptions> = {
     setterMethods.push(`public void set${pascalCaseName}(${property.property.type} ${property.propertyName}) { this.${property.propertyName} = ${property.propertyName}; }`);
     setterMethods.push(`public ${model.name} ${property.propertyName}(${property.property.type} ${property.propertyName}) { this.${property.propertyName} = ${property.propertyName}; return this; }`);
 
-    if(property.property.originalInput.type === 'array') {
+    if (property.property.originalInput.type === 'array') {
       const listType = property.property.type;
-      const itemType = listType.substring(listType.indexOf("<") + 1, listType.lastIndexOf(">"))
+      const itemType = listType.substring(listType.indexOf('<') + 1, listType.lastIndexOf('>'));
       const itemName = `${property.propertyName}Item`;
       setterMethods.push(`public ${model.name} add${pascalCaseName}Item(${itemType} ${itemName}) {
 if (this.${property.propertyName} == null) {
@@ -179,10 +201,21 @@ function getParentInterfaces(model: ConstrainedMetaModel): ConstrainedUnionModel
     .map(model => model as ConstrainedUnionModel);
 }
 
+function getAllParents(firstParent: ConstrainedObjectModel): ConstrainedObjectModel[] {
+  const parents: ConstrainedObjectModel[] = [];
+  const nextParent = getParentClass(firstParent);
+  if (nextParent) {
+    parents.push(firstParent,...getAllParents(nextParent));
+  } else {
+    parents.push(firstParent);
+  }
+  return parents;
+}
+
 function getParentClass(model: ConstrainedMetaModel): ConstrainedObjectModel | undefined {
   const parent = model.options.extend
     ?.find(parent => parent.options.isExtended);
-  return parent ? parent as ConstrainedObjectModel : undefined;
+  return parent ? (parent as ConstrainedReferenceModel).ref as ConstrainedObjectModel : undefined;
 }
 
 export const isDiscriminatorOrDictionary = (
